@@ -18,14 +18,124 @@ from rest_framework.response import Response
 from rest_framework.reverse import reverse
 from rest_framework import renderers
 from rest_framework.decorators import action
+from django.shortcuts import get_object_or_404
 from rest_framework import viewsets
 
-
 # Create your views here.
-permission_classes = [permissions.IsAuthenticatedOrReadOnly, IsOwnerOrReadOnly]
+permission_classes = [IsOwnerOrReadOnly, permissions.IsAuthenticatedOrReadOnly]
 
 
-class SnippetList(APIView):
+class UserViewSet(viewsets.ViewSet):
+    """
+    a simple viewset to list and retrieve users
+    """
+    permission_classes = []
+
+    def list(self, request):
+        users = User.objects.all()
+        serializer = UserSerializer(users, many=True)
+        return Response(serializer.data)
+
+    def retrieve(self, request, pk=None):
+        users = User.objects.all()
+        user = get_object_or_404(users, pk=pk)
+        serializer = UserSerializer(user)
+        return JsonResponse(serializer.data)
+
+    @action(detail=True, permission_classes=permission_classes)
+    def get_permissions(self):
+        if self.action == "list":
+            permission_class_list = []
+        else:
+            permission_class_list = []
+
+        return [permission() for permission in permission_class_list]
+
+    def create(self, request):
+        data = JSONParser().parse(request)
+        serializer = UserSerializer(data=data)
+        if serializer.is_valid():
+            serializer.save()
+            return JsonResponse(serializer.data)
+        return JsonResponse(serializer.errors)
+
+    @action(detail=False)
+    def recent_user(self, request):
+        recent_users = User.objects.all().order_by("-last_login")[0]
+        serializer = UserSerializer(recent_users)
+        return JsonResponse(serializer.data)
+
+
+
+
+
+
+
+
+class UserModelViewSet(viewsets.ModelViewSet):
+    serializer_class = UserSerializer
+    queryset = User.objects.all()
+
+
+class SnippetGenericView(generics.ListCreateAPIView):
+    queryset = Snippet.objects.all()
+    permission_classes = permission_classes
+    serializer_class = SnippetSerializer
+
+    def list(self, request, *args, **kwargs):
+        query_set = self.get_queryset()
+        serializer = SnippetModelSerializer(query_set, many=True)
+        return Response(serializer.data)
+
+    def create(self, request, *args, **kwargs):
+        data = JSONParser().parse(request)
+        serializer = SnippetModelSerializer(data=data)
+        if serializer.is_valid():
+            serializer.save()
+            return JsonResponse(serializer.data, status=status.HTTP_200_OK)
+        else:
+            return JsonResponse(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class SnippetGenericUpdateDeleteView(
+    generics.RetrieveUpdateDestroyAPIView
+):
+    queryset = Snippet.objects.all()
+    permission_classes = permission_classes
+    serializer_class = SnippetSerializer
+    lookup_field = "id"
+
+    def retrieve(self, request, *args, **kwargs):
+        snippet = self.get_object()
+        serialized = SnippetModelSerializer(snippet)
+        return JsonResponse(serialized.data)
+
+    def delete(self, request, *args, **kwargs):
+        snippet = self.get_object()
+        snippet.delete()
+        serialized = SnippetModelSerializer(snippet)
+        return JsonResponse(serialized.data)
+
+    def update(self, request, *args, **kwargs):
+        snippet = self.get_object()
+        data = JSONParser().parse(request)
+        serialized = SnippetModelSerializer(data=data)
+        if serialized.is_valid():
+            serialized.save()
+            return JsonResponse(serialized.data, status=status.HTTP_200_OK)
+        return JsonResponse(serialized.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def partial_update(self, request, *args, **kwargs):
+        snippet = self.get_object()
+        data = JSONParser().parse(request)
+        serialized = SnippetModelSerializer(snippet, data=data)
+        if serialized.is_valid():
+            serialized.save()
+            return JsonResponse(serialized.data, status=status.HTTP_200_OK)
+        return JsonResponse(serialized.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class SnippetList(mixins.CreateModelMixin, APIView):
     permission_classes = permission_classes
 
     def get(self, request, format=None):
@@ -130,34 +240,3 @@ class UserDetails(mixins.RetrieveModelMixin, generics.GenericAPIView):
 
     def get(self, request, *args, **kwargs):
         return self.retrieve(request, *args, **kwargs)
-
-
-@api_view(['GET'])
-def api_root(request, format=None):
-    return Response({
-        'users': reverse('user-list', request=request, format=format),
-        'snippets': reverse('snippet-list', request=request, format=format)
-    })
-
-
-class SnippetHighlighted(generics.GenericAPIView):
-    queryset = Snippet.objects.all()
-    renderer_classes = [renderers.StaticHTMLRenderer]
-
-    def get(self, request, *args, **kwargs):
-        snippet = self.get_object()
-        return Response(snippet.highlighted)
-
-
-class SnippetViewSet(viewsets.ModelViewSet):
-    queryset = Snippet.objects.all()
-    permission_classes = permission_classes
-    serializer_class = SnippetModelSerializer
-
-    @action(detail=True, render_classes=[renderers.StaticHTMLRenderer])
-    def highlightSnippet(self, request, *args, **kwargs):
-        snippet = self.get_object()
-        return Response(snippet.highlighted)
-
-    def perform_create(self, serializer):
-        serializer.save(owner=self.request.user)
